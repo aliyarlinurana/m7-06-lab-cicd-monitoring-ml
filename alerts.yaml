@@ -1,0 +1,103 @@
+groups:
+  - name: vision-moderation.alerts
+    rules:
+
+      # ── Availability: fast burn ──────────────────────────────────────────
+      # 2% of monthly error budget consumed in 1 hour → page
+      # Monthly SLO = 99.5 % availability  →  error budget = 0.5 %
+      # 14.4x multiplier = (1h / 720h) * burn that eats 2% of budget in 1h
+      - alert: AvailabilityBurnFast
+        expr: |
+          (
+            sum(rate(http_requests_total{job="vision-moderation", code=~"5.."}[1h]))
+            /
+            sum(rate(http_requests_total{job="vision-moderation"}[1h]))
+          ) > (14.4 * (1 - 0.995))
+        for: 5m
+        labels:
+          severity: page
+          team: ml-platform
+        annotations:
+          summary: "Fast availability burn — error budget draining rapidly"
+          description: >
+            The 1-hour error rate implies more than 2% of the monthly
+            error budget will be consumed at this pace. Immediate action required.
+          runbook: "https://runbooks.example.com/vision-moderation/availability-burn"
+
+      # ── Availability: slow burn ──────────────────────────────────────────
+      # 10% of monthly error budget consumed in 24 hours → ticket
+      - alert: AvailabilityBurnSlow
+        expr: |
+          (
+            sum(rate(http_requests_total{job="vision-moderation", code=~"5.."}[24h]))
+            /
+            sum(rate(http_requests_total{job="vision-moderation"}[24h]))
+          ) > (1.2 * (1 - 0.995))
+        for: 15m
+        labels:
+          severity: ticket
+          team: ml-platform
+        annotations:
+          summary: "Slow availability burn — gradual budget erosion"
+          description: >
+            The 24-hour error rate implies more than 10% of the monthly
+            error budget will be consumed at this pace. Investigate before next business day.
+          runbook: "https://runbooks.example.com/vision-moderation/availability-burn"
+
+      # ── p99 latency high ─────────────────────────────────────────────────
+      # p99 > 1 s for 5 minutes → page
+      - alert: LatencyP99High
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{job="vision-moderation"}[5m])
+            )
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: page
+          team: ml-platform
+        annotations:
+          summary: "p99 latency above 1 s SLO threshold"
+          description: >
+            The 99th-percentile response time has exceeded 1 second for more than
+            5 minutes. Users are experiencing slow predictions.
+          runbook: "https://runbooks.example.com/vision-moderation/latency-p99"
+
+      # ── Data / feature drift ─────────────────────────────────────────────
+      # PSI > 0.2 on any major input feature, sustained 1 hour → ticket
+      - alert: DriftDetected
+        expr: |
+          max by (feature) (
+            vision_moderation_feature_psi{job="vision-moderation", feature=~"image_brightness|image_sharpness|aspect_ratio|file_size_bytes"}
+          ) > 0.2
+        for: 1h
+        labels:
+          severity: ticket
+          team: ml-platform
+        annotations:
+          summary: "Input-feature drift detected (PSI > 0.2)"
+          description: >
+            At least one major input feature has a Population Stability Index above 0.2,
+            sustained for 1 hour. The production distribution has diverged from training.
+            Consider retraining or investigating upstream data pipeline changes.
+          runbook: "https://runbooks.example.com/vision-moderation/drift"
+
+      # ── Model version mismatch ───────────────────────────────────────────
+      # At least one replica serving a model_version not matching the registry → page
+      - alert: ModelVersionMismatch
+        expr: |
+          count by (model_version) (
+            vision_moderation_model_version_info{job="vision-moderation"}
+          ) > 1
+        for: 5m
+        labels:
+          severity: page
+          team: ml-platform
+        annotations:
+          summary: "Replicas are serving different model versions"
+          description: >
+            More than one distinct model_version label is present across replicas.
+            A partial rollout may have stalled or a rollback may be incomplete.
+          runbook: "https://runbooks.example.com/vision-moderation/version-mismatch"
